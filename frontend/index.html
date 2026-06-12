@@ -1,0 +1,413 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Moveango Internal Quote Tool</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { --orange:#f97316; --dark:#111827; --muted:#6b7280; --green:#16a34a; }
+    * { box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; margin: 0; background:#f7f7f8; color: var(--dark); }
+    .container { max-width: 980px; margin: 0 auto; padding: 24px; }
+    .hero { background: white; padding: 24px; border-radius: 18px; margin-top: 20px; border: 1px solid #e5e7eb; }
+    h1 { margin: 0; font-size: 32px; }
+    h2 { margin-bottom: 6px; }
+    .tag { color: var(--orange); font-weight: 700; margin-top: 6px; }
+    .grid { display:grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media(max-width:700px){ .grid { grid-template-columns:1fr; } }
+    label { font-size: 13px; font-weight: 700; margin-top: 12px; display:block; }
+    input, select, textarea, button { width: 100%; padding: 13px; margin-top: 6px; border: 1px solid #d1d5db; border-radius: 10px; font-size: 15px; background:white; }
+    button { background: var(--orange); color: white; border: 0; font-weight: bold; cursor: pointer; margin-top: 18px; }
+    button:disabled { opacity: .6; cursor: not-allowed; }
+    .card { background:white; border: 1px solid #e5e7eb; padding: 18px; margin-top: 20px; border-radius: 18px; }
+    .price { font-size: 34px; font-weight: 800; color: var(--orange); }
+    .muted { color: var(--muted); }
+    .breakdown { background:#111827; color:#f9fafb; padding:14px; border-radius:12px; overflow:auto; }
+    a.cta { display:block; text-align:center; background:var(--green); color:white; padding:14px; border-radius:12px; text-decoration:none; font-weight:bold; margin-top:14px; }
+    a.pdf { display:block; text-align:center; background:#111827; color:white; padding:14px; border-radius:12px; text-decoration:none; font-weight:bold; margin-top:14px; }
+    .address-box { position: relative; }
+    .suggestions {
+      position: absolute; top: 78px; left: 0; right: 0; background: white;
+      border: 1px solid #d1d5db; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,.12);
+      z-index: 99; max-height: 260px; overflow-y: auto; display: none;
+    }
+    .suggestion { padding: 12px; cursor: pointer; border-bottom: 1px solid #f3f4f6; font-size: 14px; }
+    .suggestion:hover { background: #fff7ed; }
+    .selected-address { font-size: 12px; color: var(--green); margin-top: 4px; min-height: 18px; }
+    th, td { border: 1px solid #e5e7eb; padding: 8px; text-align: left; }
+    th { background: #f9fafb; }
+    .warning { background:#fff7ed; border:1px solid #fed7aa; padding:12px; border-radius:12px; color:#9a3412; margin-top:12px; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <div class="hero">
+    <h1>Moveango Internal Quote Tool</h1>
+    <div class="tag">Operator-assisted quotes with professional PDF output</div>
+    <button type="button" onclick="loadQuoteHistory()" style="background:#111827;margin-top:12px;">View Quote History</button>
+    <p class="muted">Use this after a customer contacts Moveango on WhatsApp. Always include the street number where possible for accurate pickup and delivery locations. The customer receives a clean PDF. Vehicle and pricing breakdown remain internal.</p>
+
+    <div class="grid">
+      <div>
+        <label>Customer Name</label>
+        <input id="customer_name" placeholder="Customer full name" />
+      </div>
+      <div>
+        <label>Customer WhatsApp Number <span style="color:#6b7280;">(needed for WhatsApp link)</span></label>
+        <input id="customer_phone" placeholder="e.g. 081 710 8229 or 27817108229" />
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="address-box">
+        <label>Pickup Address <span style="color:#f97316;">(include street number)</span></label>
+        <input id="pickup" autocomplete="off" placeholder="e.g. 13 Hankey Avenue, Bridgemead" oninput="handleAddressInput('pickup')" />
+        <div id="pickup-suggestions" class="suggestions"></div>
+        <div id="pickup-selected" class="selected-address"></div>
+      </div>
+
+      <div class="address-box">
+        <label>Drop-off Address <span style="color:#f97316;">(include street number)</span></label>
+        <input id="dropoff" autocomplete="off" placeholder="e.g. 10 Main Road, Walmer" oninput="handleAddressInput('dropoff')" />
+        <div id="dropoff-suggestions" class="suggestions"></div>
+        <div id="dropoff-selected" class="selected-address"></div>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div>
+        <label>Service Type</label>
+        <select id="service_type">
+          <option value="purchase_collection">Purchase Collection</option>
+          <option value="store_pickup">Store Pickup</option>
+          <option value="document_courier">Document Courier Services</option>
+          <option value="furniture_appliance_delivery">Furniture & Appliance Delivery</option>
+          <option value="home_office_relocation">Home & Office Relocation</option>
+          <option value="same_day_delivery">Same-Day Delivery</option>
+        </select>
+      </div>
+      <div>
+        <label>Load Type</label>
+        <select id="load_type">
+          <option value="documents">Documents</option>
+          <option value="small_parcel">Small Parcel</option>
+          <option value="retail_bags">Retail Bags</option>
+          <option value="single_small_item">Single Small Item</option>
+          <option value="single_large_item">Single Large Item</option>
+          <option value="multiple_items">Multiple Items</option>
+          <option value="appliance">Appliance</option>
+          <option value="furniture">Furniture</option>
+          <option value="home_office_load">Home / Office Load</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div>
+        <label>Load Size</label>
+        <select id="load_size">
+          <option value="small">Small</option>
+          <option value="medium">Medium</option>
+          <option value="large">Large</option>
+          <option value="extra_large">Extra Large</option>
+        </select>
+      </div>
+      <div>
+        <label>Number of Items</label>
+        <input id="item_count" type="number" value="1" min="1" max="100" />
+      </div>
+    </div>
+
+    <div class="grid">
+      <div>
+        <label>Access Difficulty</label>
+        <select id="access_difficulty">
+          <option value="easy">Easy Access</option>
+          <option value="moderate">Moderate Access</option>
+          <option value="difficult">Difficult Access</option>
+        </select>
+      </div>
+      <div>
+        <label>Urgency</label>
+        <select id="urgency">
+          <option value="standard">Standard</option>
+          <option value="same_day">Same Day</option>
+          <option value="immediate">Immediate</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div>
+        <label>Stairs?</label>
+        <select id="has_stairs">
+          <option value="false">No</option>
+          <option value="true">Yes</option>
+        </select>
+      </div>
+      <div>
+        <label>Floor Count</label>
+        <input id="floor_count" type="number" value="0" min="0" max="20" />
+      </div>
+    </div>
+
+    <label>Fragile Items?</label>
+    <select id="is_fragile">
+      <option value="no">No</option>
+      <option value="yes">Yes</option>
+      <option value="mixed">Mixed Load</option>
+    </select>
+
+    <label>Quote Notes</label>
+    <textarea id="notes" placeholder="Optional customer-facing notes: collection time, special instructions, etc."></textarea>
+
+    <button id="quoteBtn" onclick="getQuote()">Generate Professional Quote PDF</button>
+  </div>
+
+  <div id="history"></div>
+  <div id="result"></div>
+</div>
+
+<script>
+const API_BASE = window.location.hostname === "localhost" ? "http://localhost:8000" : "/api";
+let timers = {};
+let selected = { pickup: null, dropoff: null };
+
+function hideSuggestions(field) {
+  document.getElementById(`${field}-suggestions`).style.display = "none";
+}
+
+async function handleAddressInput(field) {
+  const input = document.getElementById(field);
+  const query = input.value.trim();
+  selected[field] = null;
+  document.getElementById(`${field}-selected`).textContent = "";
+  clearTimeout(timers[field]);
+
+  if (query.length < 3) {
+    hideSuggestions(field);
+    return;
+  }
+
+  timers[field] = setTimeout(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/address-suggest?q=${encodeURIComponent(query)}`);
+      const data = await res.json();
+      const box = document.getElementById(`${field}-suggestions`);
+      box.innerHTML = "";
+
+      if (!data.suggestions || data.suggestions.length === 0) {
+        box.innerHTML = `<div class="suggestion">No external match found. A review-required fallback may appear below; for exact street numbers use Google Maps API.</div>`;
+        box.style.display = "block";
+        return;
+      }
+
+      data.suggestions.forEach(item => {
+        const div = document.createElement("div");
+        div.className = "suggestion";
+        div.textContent = item.label;
+        div.onclick = () => selectAddress(field, item);
+        box.appendChild(div);
+      });
+
+      box.style.display = "block";
+    } catch (e) {
+      console.error(e);
+    }
+  }, 450);
+}
+
+function selectAddress(field, item) {
+  const input = document.getElementById(field);
+  const typedValue = input.value.trim();
+
+  const startsWithStreetNumber = /^\s*\d+[a-zA-Z]?\s+/.test(typedValue);
+  const selectedHasStreetNumber = /^\s*\d+[a-zA-Z]?\s+/.test(item.value || "");
+
+  let customerFacingValue = item.value;
+
+  if (startsWithStreetNumber && !selectedHasStreetNumber) {
+    customerFacingValue = `${typedValue}, ${item.value}`;
+  }
+
+  selected[field] = {
+    ...item,
+    value: customerFacingValue
+  };
+
+  input.value = customerFacingValue;
+  document.getElementById(`${field}-selected`).textContent = "Selected ✓";
+  hideSuggestions(field);
+}
+
+function fullPdfUrl(path) {
+  if (window.location.hostname === "localhost") {
+    return `http://localhost:8000${path}`;
+  }
+  return path;
+}
+
+async function getQuote() {
+  const btn = document.getElementById("quoteBtn");
+  btn.disabled = true;
+  btn.textContent = "Generating PDF quote...";
+
+  const payload = {
+    customer_name: document.getElementById("customer_name").value,
+    customer_phone: document.getElementById("customer_phone").value.replace(/\D/g, ""),
+    pickup: selected.pickup?.value || document.getElementById("pickup").value,
+    dropoff: selected.dropoff?.value || document.getElementById("dropoff").value,
+    pickup_lat: selected.pickup?.lat ?? null,
+    pickup_lon: selected.pickup?.lon ?? null,
+    dropoff_lat: selected.dropoff?.lat ?? null,
+    dropoff_lon: selected.dropoff?.lon ?? null,
+    service_type: document.getElementById("service_type").value,
+    load_type: document.getElementById("load_type").value,
+    load_size: document.getElementById("load_size").value,
+    item_count: Number(document.getElementById("item_count").value),
+    access_difficulty: document.getElementById("access_difficulty").value,
+    urgency: document.getElementById("urgency").value,
+    has_stairs: document.getElementById("has_stairs").value === "true",
+    floor_count: Number(document.getElementById("floor_count").value),
+    is_fragile: document.getElementById("is_fragile").value,
+    notes: document.getElementById("notes").value
+  };
+
+  try {
+    const res = await fetch(`${API_BASE}/quote`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload)
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      let message = "Unable to calculate quote";
+
+      if (Array.isArray(data.detail)) {
+        message = data.detail.map(err => {
+          const field = Array.isArray(err.loc) ? err.loc.join(".") : "field";
+          return `${field}: ${err.msg}`;
+        }).join("<br>");
+      } else if (typeof data.detail === "string") {
+        message = data.detail;
+      } else if (data.detail) {
+        message = JSON.stringify(data.detail);
+      }
+
+      throw new Error(message);
+    }
+
+    const pdfLink = fullPdfUrl(data.pdf_url);
+
+    document.getElementById("result").innerHTML = `
+      <div class="card">
+        <h2>Quote Generated</h2>
+        <div class="muted">Customer-facing total</div>
+        <div class="price">R${data.estimated_quote}</div>
+        <p><b>Quote Number:</b> ${data.quote_number}</p>
+        <p><b>Status:</b> ${data.status || "Draft"}</p>
+        <p><b>Customer Service Label:</b> ${data.customer_service_label}</p>
+        <p><b>Customer Distance:</b> ${data.distance_km} km</p>
+        <p><b>Operational Distance:</b> ${data.operational_distance_km} km</p>
+        <p><b>Empty Driving:</b> ${data.dead_mileage_km} km</p>
+        <p><b>Billing Distance:</b> ${data.chargeable_distance_km} km</p>
+        <p><b>PDF:</b> Customer PDF hides vehicle and internal breakdown.</p>
+
+        <a class="pdf" href="${pdfLink}" target="_blank">Open Quote PDF</a>
+        ${data.whatsapp_url ? `<a class="cta" href="${data.whatsapp_url}" target="_blank">Open WhatsApp Message</a>` : `<div class="warning">Customer WhatsApp number was not provided. PDF was generated, but WhatsApp message link is disabled.</div>`}
+
+        <div class="warning">
+          Internal only: attach the PDF manually in WhatsApp after opening the message.
+        </div>
+
+        <h3>Internal Operations View</h3>
+        <p><b>Recommended Vehicle:</b> ${data.recommended_vehicle}</p>
+        <p><b>Effort Level:</b> ${data.effort_level}</p>
+        <p><b>Helpers Required:</b> ${data.helpers_required}</p>
+        <p class="muted">${data.expected_internal_notes}</p>
+
+        <h3>Internal Breakdown</h3>
+        <pre class="breakdown">${JSON.stringify(data.internal_breakdown, null, 2)}</pre>
+      </div>
+    `;
+  } catch (err) {
+    document.getElementById("result").innerHTML = `
+      <div class="card">
+        <h3>Could not generate quote</h3>
+        <p>${err.message}</p>
+      </div>
+    `;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Generate Professional Quote PDF";
+  }
+}
+
+document.addEventListener("click", (e) => {
+  if (!e.target.closest(".address-box")) {
+    hideSuggestions("pickup");
+    hideSuggestions("dropoff");
+  }
+});
+
+async function loadQuoteHistory() {
+  const box = document.getElementById("history");
+  box.innerHTML = `<div class="card"><h2>Loading quote history...</h2></div>`;
+
+  try {
+    const res = await fetch(`${API_BASE}/quotes-list`);
+    const data = await res.json();
+
+    const rows = (data.quotes || []).map(q => `
+      <tr>
+        <td>${q.quote_number}</td>
+        <td>${q.customer_name || ""}</td>
+        <td>${q.customer_phone || ""}</td>
+        <td>R${q.amount}</td>
+        <td>
+          <select onchange="updateQuoteStatus('${q.quote_number}', this.value)">
+            ${["Draft", "Sent", "Accepted", "Declined", "Completed", "Cancelled"].map(s => `
+              <option value="${s}" ${q.status === s ? "selected" : ""}>${s}</option>
+            `).join("")}
+          </select>
+        </td>
+        <td>${q.created_at || ""}</td>
+        <td>${q.pdf_url ? `<a href="${fullPdfUrl(q.pdf_url)}" target="_blank">PDF</a>` : ""}</td>
+      </tr>
+    `).join("");
+
+    box.innerHTML = `
+      <div class="card">
+        <h2>Quote History</h2>
+        <table style="width:100%;border-collapse:collapse;font-size:13px;">
+          <thead>
+            <tr>
+              <th>Quote</th>
+              <th>Customer</th>
+              <th>Phone</th>
+              <th>Amount</th>
+              <th>Status</th>
+              <th>Date</th>
+              <th>PDF</th>
+            </tr>
+          </thead>
+          <tbody>${rows || `<tr><td colspan="7">No quotes yet.</td></tr>`}</tbody>
+        </table>
+      </div>
+    `;
+  } catch (err) {
+    box.innerHTML = `<div class="card"><h3>Could not load history</h3><p>${err.message}</p></div>`;
+  }
+}
+
+async function updateQuoteStatus(quoteNumber, status) {
+  await fetch(`${API_BASE}/quotes-list/${quoteNumber}/status?status=${encodeURIComponent(status)}`, {
+    method: "PATCH"
+  });
+}
+
+</script>
+</body>
+</html>

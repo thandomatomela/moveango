@@ -1,0 +1,21 @@
+services:
+  moveango-api:
+    build: ./backend
+    container_name: moveango-quote-api
+    environment:
+      GOOGLE_MAPS_API_KEY: ""
+    volumes:
+      - ./data:/app/data
+      - ./quotes:/app/generated_quotes
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  moveango-web:
+    image: nginx:alpine
+    container_name: moveango-quote-web
+    volumes:
+      - ./frontend:/usr/share/nginx/html:ro
+    ports:
+      - "8080:80"
+    restart: unless-stopped
