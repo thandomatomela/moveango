@@ -37,15 +37,62 @@
     th, td { border: 1px solid #e5e7eb; padding: 8px; text-align: left; }
     th { background: #f9fafb; }
     .warning { background:#fff7ed; border:1px solid #fed7aa; padding:12px; border-radius:12px; color:#9a3412; margin-top:12px; }
+    .tabs {
+  display: flex;
+  gap: 10px;
+  margin-top: 20px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.tab {
+  width: auto;
+  padding: 12px 24px;
+  background: #e5e7eb;
+  color: #111827;
+}
+
+.tab.active {
+  background: #f97316;
+  color: white;
+}
+
+.tab-content {
+  display: none;
+}
+
+.tab-content.active {
+  display: block;
+}
   </style>
 </head>
 <body>
 <div class="container">
   <div class="hero">
+    <h1>Moveango Operations Centre</h1>
+    <div class="tag">Collect. Deliver. Move.</div>
+  </div>
+
+  <div class="tabs">
+    <button class="tab active" onclick="showTab('quotesTab', this)">New Quote</button>
+    <button class="tab" onclick="showTab('historyTab', this)">Quote History</button>
+    <button class="tab" onclick="showTab('jobsTab', this)">Jobs Dashboard</button>
+    <button class="tab" onclick="showTab('analyticsTab', this)">Analytics</button>
+  </div>
+
+  <div id="quotesTab" class="tab-content active">
+    <div class="hero">
     <h1>Moveango Internal Quote Tool</h1>
     <div class="tag">Operator-assisted quotes with professional PDF output</div>
     <button type="button" onclick="loadQuoteHistory()" style="background:#111827;margin-top:12px;">View Quote History</button>
     <p class="muted">Use this after a customer contacts Moveango on WhatsApp. Always include the street number where possible for accurate pickup and delivery locations. The customer receives a clean PDF. Vehicle and pricing breakdown remain internal.</p>
+    <button
+  type="button"
+  onclick="loadJobs()"
+  style="background:#16a34a;margin-top:12px;"
+>
+  View Jobs Dashboard
+</button>
 
     <div class="grid">
       <div>
@@ -164,14 +211,98 @@
     <button id="quoteBtn" onclick="getQuote()">Generate Professional Quote PDF</button>
   </div>
 
-  <div id="history"></div>
+    </div>
+
+  <div id="historyTab" class="tab-content">
+    <div id="history"></div>
+  </div>
+
+  <div id="jobsTab" class="tab-content">
+    <div id="jobs"></div>
+  </div>
+
+  <div id="adminTab" class="tab-content">
+  <div class="card">
+    <h2>Staff Registry</h2>
+    <p class="muted">Register drivers, helpers and operators who work with Moveango.</p>
+
+    <div class="grid">
+      <div>
+        <label>Staff Name</label>
+        <input id="staff_name" placeholder="e.g. Lwando Mxinwa" />
+      </div>
+
+      <div>
+        <label>Phone Number</label>
+        <input id="staff_phone" placeholder="e.g. 081 000 0000" />
+      </div>
+    </div>
+
+    <div class="grid">
+      <div>
+        <label>Role</label>
+        <select id="staff_role">
+          <option value="driver">Driver</option>
+          <option value="helper">Helper</option>
+          <option value="operator">Operator</option>
+          <option value="admin">Admin</option>
+        </select>
+      </div>
+
+      <div>
+        <label>Status</label>
+        <select id="staff_status">
+          <option value="active">Active</option>
+          <option value="inactive">Inactive</option>
+        </select>
+      </div>
+    </div>
+
+    <button onclick="createStaffMember()">Add Staff Member</button>
+  </div>
+
+  <div id="staffList"></div>
+</div>
+
+  <div id="analyticsTab" class="tab-content">
+    <div class="card">
+      <h2>Business Analytics</h2>
+      <p class="muted">Coming soon.</p>
+    </div>
+  </div>
+
   <div id="result"></div>
+</div>
 </div>
 
 <script>
 const API_BASE = window.location.hostname === "localhost" ? "http://localhost:8000" : "/api";
 let timers = {};
 let selected = { pickup: null, dropoff: null };
+function showTab(tabId, btn) {
+  document
+    .querySelectorAll(".tab-content")
+    .forEach(tab => tab.classList.remove("active"));
+
+  document
+    .querySelectorAll(".tab")
+    .forEach(tab => tab.classList.remove("active"));
+
+  document.getElementById(tabId).classList.add("active");
+  btn.classList.add("active");
+
+  if (tabId === "historyTab") {
+    loadQuoteHistory();
+  }
+
+  if (tabId === "jobsTab") {
+    loadJobs();
+  }
+
+  if (tabId === "adminTab") {
+  loadStaff();
+}
+}
 
 function hideSuggestions(field) {
   document.getElementById(`${field}-suggestions`).style.display = "none";
@@ -375,6 +506,14 @@ async function loadQuoteHistory() {
         </td>
         <td>${q.created_at || ""}</td>
         <td>${q.pdf_url ? `<a href="${fullPdfUrl(q.pdf_url)}" target="_blank">PDF</a>` : ""}</td>
+
+<td>
+  ${
+    q.status === "Accepted"
+      ? `<button onclick="convertToJob('${q.quote_number}')" style="margin:0;background:#16a34a;">Convert To Job</button>`
+      : ""
+  }
+</td>
       </tr>
     `).join("");
 
@@ -391,9 +530,10 @@ async function loadQuoteHistory() {
               <th>Status</th>
               <th>Date</th>
               <th>PDF</th>
+              <th>Actions</th>
             </tr>
           </thead>
-          <tbody>${rows || `<tr><td colspan="7">No quotes yet.</td></tr>`}</tbody>
+          <tbody>${rows || `<tr><td colspan="8">No quotes yet.</td></tr>`}</tbody>
         </table>
       </div>
     `;
@@ -402,12 +542,345 @@ async function loadQuoteHistory() {
   }
 }
 
-async function updateQuoteStatus(quoteNumber, status) {
-  await fetch(`${API_BASE}/quotes-list/${quoteNumber}/status?status=${encodeURIComponent(status)}`, {
-    method: "PATCH"
-  });
+async function convertToJob(quoteNumber) {
+
+  const collectionDate =
+    prompt("Collection Date (YYYY-MM-DD)") || "";
+
+  const collectionTime =
+    prompt("Collection Time (HH:MM)") || "";
+
+  try {
+
+    const res = await fetch(
+      `${API_BASE}/quotes-list/${quoteNumber}/convert-to-job?collection_date=${encodeURIComponent(collectionDate)}&collection_time=${encodeURIComponent(collectionTime)}`,
+      {
+        method: "POST"
+      }
+    );
+
+    if (!res.ok) {
+      throw new Error("Could not convert quote");
+    }
+
+    const job = await res.json();
+
+    alert(
+      `Job Created\n\n${job.job_number}`
+    );
+
+    loadJobs();
+
+  } catch (err) {
+    alert(err.message);
+  }
 }
 
+
+const MOVEANGO_STAFF = [
+  { name: "Lwando", role: "driver" },
+  { name: "Siphiwo", role: "helper" },
+  { name: "Kwande", role: "driver" },
+  { name: "Unassigned", role: "driver" },
+  { name: "Unassigned", role: "helper" },
+];
+
+function staffOptions(role, selectedName) {
+  const options = MOVEANGO_STAFF
+    .filter(person => person.role === role)
+    .map(person => `
+      <option value="${person.name}" ${selectedName === person.name ? "selected" : ""}>
+        ${person.name}
+      </option>
+    `)
+    .join("");
+
+  return `<option value="">Select ${role}</option>${options}`;
+}
+
+function toggleJob(jobNumber) {
+  const body = document.getElementById(`job-body-${jobNumber}`);
+  body.style.display = body.style.display === "none" ? "block" : "none";
+}
+
+
+async function loadJobs() {
+  const box = document.getElementById("jobs");
+
+  box.innerHTML = `<div class="card"><h2>Loading jobs...</h2></div>`;
+
+  try {
+    const res = await fetch(`${API_BASE}/jobs-list`);
+    const data = await res.json();
+
+    const cards = (data.jobs || []).map(job => `
+  <div class="card">
+    <div
+      onclick="toggleJob('${job.job_number}')"
+      style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;cursor:pointer;"
+    >
+      <div>
+        <h2>${job.job_number}</h2>
+        <p class="muted">${job.customer_name || ""} • R${job.amount || 0}</p>
+      </div>
+
+      <div>
+        <strong>${job.status || "Booked"}</strong>
+        <p class="muted">Click to expand</p>
+      </div>
+    </div>
+
+    <div id="job-body-${job.job_number}" style="display:none;margin-top:14px;">
+      <div class="grid">
+        <div>
+          <label>Customer</label>
+          <input value="${job.customer_name || ""}" disabled />
+        </div>
+
+        <div>
+          <label>Phone</label>
+          <input value="${job.customer_phone || ""}" disabled />
+        </div>
+      </div>
+
+      <div class="grid">
+        <div>
+          <label>Pickup</label>
+          <textarea disabled>${job.pickup || ""}</textarea>
+        </div>
+
+        <div>
+          <label>Drop-off</label>
+          <textarea disabled>${job.dropoff || ""}</textarea>
+        </div>
+      </div>
+
+      <div class="grid">
+        <div>
+          <label>Collection Date</label>
+          <input id="date-${job.job_number}" type="date" value="${job.collection_date || ""}" />
+        </div>
+
+        <div>
+          <label>Collection Time</label>
+          <input id="time-${job.job_number}" type="time" value="${job.collection_time || ""}" />
+        </div>
+      </div>
+
+      <div class="grid">
+        <div>
+          <label>Assigned Driver</label>
+          <select id="driver-${job.job_number}">
+            ${staffOptions("driver", job.assigned_driver)}
+          </select>
+        </div>
+
+        <div>
+          <label>Assigned Helper</label>
+          <select id="helper-${job.job_number}">
+            ${staffOptions("helper", job.assigned_helper)}
+          </select>
+        </div>
+      </div>
+
+      <div class="grid">
+        <div>
+          <label>Assigned Vehicle</label>
+          <select id="vehicle-${job.job_number}">
+            ${["", "Bike", "NP200", "NP200 + Trailer", "Outsourced Truck"].map(vehicle => `
+              <option value="${vehicle}" ${job.assigned_vehicle === vehicle ? "selected" : ""}>
+                ${vehicle || "Select vehicle"}
+              </option>
+            `).join("")}
+          </select>
+        </div>
+
+        <div>
+          <label>Job Status</label>
+          <select id="status-${job.job_number}">
+            ${["Booked", "Assigned", "In Progress", "Collected", "Delivered", "Completed", "Cancelled"].map(status => `
+              <option value="${status}" ${job.status === status ? "selected" : ""}>
+                ${status}
+              </option>
+            `).join("")}
+          </select>
+        </div>
+      </div>
+
+      <label>Job Notes</label>
+      <textarea id="notes-${job.job_number}" placeholder="Internal notes for this job...">${job.notes || ""}</textarea>
+
+      <button onclick="saveJob('${job.job_number}')" style="background:#16a34a;">
+        Save Job Assignment
+      </button>
+    </div>
+  </div>
+`).join("");
+
+    box.innerHTML = `
+      <div class="card">
+        <h2>Jobs Dashboard</h2>
+        <p class="muted">Assign drivers, helpers, vehicles and track job progress.</p>
+      </div>
+      ${cards || `<div class="card"><h2>No jobs yet.</h2></div>`}
+    `;
+
+  } catch (err) {
+    box.innerHTML = `<div class="card"><h3>${err.message}</h3></div>`;
+  }
+}
+
+async function saveJob(jobNumber) {
+  const params = new URLSearchParams({
+    collection_date: document.getElementById(`date-${jobNumber}`).value,
+    collection_time: document.getElementById(`time-${jobNumber}`).value,
+    assigned_driver: document.getElementById(`driver-${jobNumber}`).value,
+    assigned_helper: document.getElementById(`helper-${jobNumber}`).value,
+    assigned_vehicle: document.getElementById(`vehicle-${jobNumber}`).value,
+    notes: document.getElementById(`notes-${jobNumber}`).value,
+  });
+
+  const status = document.getElementById(`status-${jobNumber}`).value;
+
+  try {
+    const detailsRes = await fetch(
+      `${API_BASE}/jobs-list/${jobNumber}/details?${params.toString()}`,
+      { method: "PATCH" }
+    );
+
+    if (!detailsRes.ok) {
+      throw new Error("Could not save job details");
+    }
+
+    const statusRes = await fetch(
+      `${API_BASE}/jobs-list/${jobNumber}/status?status=${encodeURIComponent(status)}`,
+      { method: "PATCH" }
+    );
+
+    if (!statusRes.ok) {
+      throw new Error("Could not update job status");
+    }
+
+    alert("Job saved successfully");
+    loadJobs();
+
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
+async function updateJobStatus(jobNumber, status) {
+  await fetch(
+    `${API_BASE}/jobs-list/${jobNumber}/status?status=${encodeURIComponent(status)}`,
+    {
+      method: "PATCH"
+    }
+  );
+}
+
+async function updateJobStatus(jobNumber, status) {
+
+  await fetch(
+    `${API_BASE}/jobs-list/${jobNumber}/status?status=${encodeURIComponent(status)}`,
+    {
+      method: "PATCH"
+    }
+  );
+}
+
+async function updateQuoteStatus(quoteNumber, status) {
+  await fetch(
+    `${API_BASE}/quotes-list/${quoteNumber}/status?status=${encodeURIComponent(status)}`,
+    {
+      method: "PATCH"
+    }
+  );
+}
+
+async function createStaffMember() {
+  const name = document.getElementById("staff_name").value.trim();
+  const phone = document.getElementById("staff_phone").value.trim();
+  const role = document.getElementById("staff_role").value;
+  const status = document.getElementById("staff_status").value;
+
+  if (!name) {
+    alert("Staff name is required");
+    return;
+  }
+
+  const params = new URLSearchParams({
+    name,
+    phone,
+    role,
+    status
+  });
+
+  try {
+    const res = await fetch(`${API_BASE}/staff?${params.toString()}`, {
+      method: "POST"
+    });
+
+    if (!res.ok) {
+      throw new Error("Could not create staff member");
+    }
+
+    document.getElementById("staff_name").value = "";
+    document.getElementById("staff_phone").value = "";
+    document.getElementById("staff_role").value = "driver";
+    document.getElementById("staff_status").value = "active";
+
+    loadStaff();
+
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
+async function loadStaff() {
+  const box = document.getElementById("staffList");
+  box.innerHTML = `<div class="card"><h2>Loading staff...</h2></div>`;
+
+  try {
+    const res = await fetch(`${API_BASE}/staff`);
+    const data = await res.json();
+
+    const rows = (data.staff || []).map(person => `
+      <tr>
+        <td>${person.name}</td>
+        <td>${person.phone || ""}</td>
+        <td>${person.role}</td>
+        <td>${person.status}</td>
+        <td>${person.created_at || ""}</td>
+      </tr>
+    `).join("");
+
+    box.innerHTML = `
+      <div class="card">
+        <h2>Registered Staff</h2>
+
+        <table style="width:100%;border-collapse:collapse;font-size:13px;">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Phone</th>
+              <th>Role</th>
+              <th>Status</th>
+              <th>Created</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            ${rows || `<tr><td colspan="5">No staff registered yet.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    `;
+
+  } catch (err) {
+    box.innerHTML = `<div class="card"><h3>${err.message}</h3></div>`;
+  }
+}
 </script>
 </body>
 </html>
+

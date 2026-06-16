@@ -10,13 +10,30 @@ from urllib.parse import quote_plus
 from .pricing import calculate_quote, PRICING_CONFIG, SERVICE_TYPES, LOAD_TYPES
 from .distance import calculate_route_between, suggest_addresses, provider_diagnostics
 from .pdf_generator import generate_quote_pdf
-from .storage import init_db, save_quote, list_quotes, get_quote, update_quote_status
+from .storage import (
+    init_db,
+    save_quote,
+    list_quotes,
+    get_quote,
+    update_quote_status,
+    convert_quote_to_job,
+    list_jobs,
+    update_job_status,
+    update_job_details,
+    get_job,
+    create_staff_member,
+    list_staff,
+    update_staff_member,
+)
 
 DEPOT_ADDRESS = "13 Hankey Avenue, Bridgemead, Gqeberha, Eastern Cape, South Africa"
 DEPOT_LAT = -33.9043
 DEPOT_LON = 25.5706
 
-app = FastAPI(title="Moveango Internal Quote Tool API", version="1.7.0")
+GENERATED_DIR = Path("/app/generated_quotes")
+GENERATED_DIR.mkdir(parents=True, exist_ok=True)
+
+app = FastAPI(title="Moveango Internal Quote Tool API", version="1.8.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -26,9 +43,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-GENERATED_DIR = Path("/app/generated_quotes")
-GENERATED_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/quotes", StaticFiles(directory=str(GENERATED_DIR)), name="quotes")
+
 
 @app.on_event("startup")
 def startup_event():
@@ -60,6 +76,7 @@ LoadSize = Literal["small", "medium", "large", "extra_large"]
 Urgency = Literal["standard", "same_day", "immediate"]
 AccessDifficulty = Literal["easy", "moderate", "difficult"]
 
+
 class QuoteRequest(BaseModel):
     customer_name: str = "Customer"
     customer_phone: str = ""
@@ -84,6 +101,7 @@ class QuoteRequest(BaseModel):
 
     is_fragile: str = "no"
     notes: Optional[str] = None
+
 
 class QuoteResponse(BaseModel):
     quote_number: str
@@ -114,28 +132,6 @@ class QuoteResponse(BaseModel):
     pdf_url: str
     whatsapp_url: str
 
-@app.get("/health")
-def health():
-    return {"status": "ok", "service": "moveango-internal-quote-tool", "version": "1.7.0"}
-
-@app.get("/config")
-def config():
-    return {
-        "service_types": SERVICE_TYPES,
-        "load_types": LOAD_TYPES,
-        "pricing": PRICING_CONFIG,
-    }
-
-@app.get("/address-suggest")
-def address_suggest(q: str = Query(..., min_length=3)):
-    return {"query": q, "suggestions": suggest_addresses(q)}
-
-
-@app.get("/address-debug")
-def address_debug(q: str = Query(..., min_length=3)):
-    return provider_diagnostics(q)
-
-
 
 def normalize_sa_phone(phone: str) -> str:
     digits = "".join(ch for ch in (phone or "") if ch.isdigit())
@@ -161,6 +157,108 @@ def normalize_sa_phone(phone: str) -> str:
 def next_quote_number() -> str:
     stamp = datetime.now().strftime("%Y%m%d%H%M%S")
     return f"MVQ-{stamp}"
+
+
+@app.get("/health")
+def health():
+    return {
+        "status": "ok",
+        "service": "moveango-internal-quote-tool",
+        "version": "1.8.0",
+        "depot": DEPOT_ADDRESS,
+    }
+
+
+@app.get("/config")
+def config():
+    return {
+        "service_types": SERVICE_TYPES,
+        "load_types": LOAD_TYPES,
+        "pricing": PRICING_CONFIG,
+    }
+
+
+@app.get("/address-suggest")
+def address_suggest(q: str = Query(..., min_length=3)):
+    return {
+        "query": q,
+        "suggestions": suggest_addresses(q),
+    }
+
+
+@app.get("/address-debug")
+def address_debug(q: str = Query(..., min_length=3)):
+    return provider_diagnostics(q)
+
+@app.post("/staff")
+def create_staff_endpoint(
+    name: str,
+    phone: str = "",
+    role: str = "helper",
+    status: str = "active",
+):
+    allowed_roles = {"driver", "helper", "admin", "operator"}
+    allowed_statuses = {"active", "inactive"}
+
+    if role not in allowed_roles:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid role. Allowed: {', '.join(sorted(allowed_roles))}",
+        )
+
+    if status not in allowed_statuses:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid status. Allowed: {', '.join(sorted(allowed_statuses))}",
+        )
+
+    staff = create_staff_member(
+        name=name,
+        phone=phone,
+        role=role,
+        status=status,
+    )
+
+    return staff
+
+
+@app.get("/staff")
+def list_staff_endpoint(
+    role: str | None = None,
+    status: str | None = "active",
+):
+    return {
+        "staff": list_staff(
+            role=role,
+            status=status,
+        )
+    }
+
+
+@app.patch("/staff/{staff_id}")
+def update_staff_endpoint(
+    staff_id: int,
+    name: str = "",
+    phone: str = "",
+    role: str = "",
+    status: str = "",
+):
+    staff = update_staff_member(
+        staff_id=staff_id,
+        name=name,
+        phone=phone,
+        role=role,
+        status=status,
+    )
+
+    if not staff:
+        raise HTTPException(
+            status_code=404,
+            detail="Staff member not found",
+        )
+
+    return staff
+
 
 @app.post("/quote", response_model=QuoteResponse)
 def quote(request: QuoteRequest):
@@ -199,20 +297,23 @@ def quote(request: QuoteRequest):
         if not route_result.get("success"):
             raise HTTPException(
                 status_code=400,
-                detail=f"{label} route failed: {route_result.get('error', 'Could not calculate route distance.')}"
+                detail=f"{label} route failed: {route_result.get('error', 'Could not calculate route distance.')}",
             )
 
     customer_distance_km = pickup_to_dropoff["distance_km"]
+
     operational_distance_km = round(
         depot_to_pickup["distance_km"]
         + pickup_to_dropoff["distance_km"]
         + dropoff_to_depot["distance_km"],
         1,
     )
-    dead_mileage_km = round(operational_distance_km - customer_distance_km, 1)
 
-    # Safety guard: for any non-depot job, empty driving should not be zero.
-    # If it is zero, it usually means the fallback provider used the same approximate coordinates.
+    dead_mileage_km = round(
+        operational_distance_km - customer_distance_km,
+        1,
+    )
+
     if dead_mileage_km <= 0 and customer_distance_km > 0:
         dead_mileage_km = 1.0
         operational_distance_km = round(customer_distance_km + dead_mileage_km, 1)
@@ -238,6 +339,7 @@ def quote(request: QuoteRequest):
     calculated = calculate_quote(request.model_dump(), route)
 
     today = datetime.now()
+
     quote_data = {
         **calculated,
         "quote_number": next_quote_number(),
@@ -250,22 +352,33 @@ def quote(request: QuoteRequest):
     }
 
     pdf_url = generate_quote_pdf(quote_data)
+
     quote_data["pdf_url"] = pdf_url
+    quote_data["billing_distance_km"] = quote_data.get(
+        "billing_distance_km",
+        quote_data.get("chargeable_distance_km"),
+    )
+
     save_quote(quote_data)
 
     message = (
-    f"Hi {request.customer_name or 'there'}, please find your Moveango quote attached.\n\n"
-    f"Quote Number: {quote_data['quote_number']}\n"
-    f"Total Service Fee: R{quote_data['estimated_quote']}\n\n"
-    f"To accept this quotation simply reply:\n\n"
-    f"ACCEPT \n\n"
-    "Please review the PDF and let us know if you would like any changes.\n\n"
-    "Moveango\n"
-    "Collect. Deliver. Move."
-)
+        f"Hi {request.customer_name or 'there'}, please find your Moveango quote attached.\n\n"
+        f"Quote Number: {quote_data['quote_number']}\n"
+        f"Total Service Fee: R{quote_data['estimated_quote']}\n\n"
+        "To accept this quotation simply reply:\n\n"
+        f"ACCEPT {quote_data['quote_number']}\n\n"
+        "Please review the PDF and let us know if you would like any changes.\n\n"
+        "Moveango\n"
+        "Collect. Deliver. Move."
+    )
 
     normalized_phone = normalize_sa_phone(request.customer_phone)
-    whatsapp_url = f"https://wa.me/{normalized_phone}?text={quote_plus(message)}" if normalized_phone else ""
+
+    whatsapp_url = (
+        f"https://wa.me/{normalized_phone}?text={quote_plus(message)}"
+        if normalized_phone
+        else ""
+    )
 
     return {
         **quote_data,
@@ -281,23 +394,170 @@ def quote(request: QuoteRequest):
 
 @app.get("/quotes-list")
 def quotes_list(search: str | None = None, limit: int = 100):
-    return {"quotes": list_quotes(limit=limit, search=search)}
+    return {
+        "quotes": list_quotes(
+            limit=limit,
+            search=search,
+        )
+    }
+
 
 @app.get("/quotes-list/{quote_number}")
 def quote_detail(quote_number: str):
-    quote = get_quote(quote_number)
-    if not quote:
-        raise HTTPException(status_code=404, detail="Quote not found")
-    return quote
+    quote_record = get_quote(quote_number)
+
+    if not quote_record:
+        raise HTTPException(
+            status_code=404,
+            detail="Quote not found",
+        )
+
+    return quote_record
+
 
 @app.patch("/quotes-list/{quote_number}/status")
 def quote_status_update(quote_number: str, status: str):
-    allowed = {"Draft", "Sent", "Accepted", "Declined", "Completed", "Cancelled"}
+    allowed = {
+        "Draft",
+        "Sent",
+        "Accepted",
+        "Declined",
+        "Completed",
+        "Cancelled",
+    }
+
     if status not in allowed:
-        raise HTTPException(status_code=400, detail=f"Invalid status. Allowed: {', '.join(sorted(allowed))}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid status. Allowed: {', '.join(sorted(allowed))}",
+        )
 
-    quote = update_quote_status(quote_number, status)
-    if not quote:
-        raise HTTPException(status_code=404, detail="Quote not found")
+    quote_record = update_quote_status(
+        quote_number=quote_number,
+        status=status,
+    )
 
-    return quote
+    if not quote_record:
+        raise HTTPException(
+            status_code=404,
+            detail="Quote not found",
+        )
+
+    return quote_record
+
+
+@app.post("/quotes-list/{quote_number}/convert-to-job")
+def convert_to_job_endpoint(
+    quote_number: str,
+    collection_date: str = "",
+    collection_time: str = "",
+    assigned_driver: str = "",
+    assigned_helper: str = "",
+    assigned_vehicle: str = "",
+    notes: str = "",
+):
+    job = convert_quote_to_job(
+        quote_number=quote_number,
+        collection_date=collection_date,
+        collection_time=collection_time,
+        assigned_driver=assigned_driver,
+        assigned_helper=assigned_helper,
+        assigned_vehicle=assigned_vehicle,
+        notes=notes,
+    )
+
+    if not job:
+        raise HTTPException(
+            status_code=404,
+            detail="Quote not found",
+        )
+
+    return job
+
+@app.get("/jobs-list")
+def jobs_list_endpoint(
+    limit: int = 100,
+    search: str | None = None,
+):
+    return {
+        "jobs": list_jobs(
+            limit=limit,
+            search=search,
+        )
+    }
+
+@app.patch("/jobs-list/{job_number}/details")
+def update_job_details_endpoint(
+    job_number: str,
+    collection_date: str = "",
+    collection_time: str = "",
+    assigned_driver: str = "",
+    assigned_helper: str = "",
+    assigned_vehicle: str = "",
+    notes: str = "",
+):
+    job = update_job_details(
+        job_number=job_number,
+        collection_date=collection_date,
+        collection_time=collection_time,
+        assigned_driver=assigned_driver,
+        assigned_helper=assigned_helper,
+        assigned_vehicle=assigned_vehicle,
+        notes=notes,
+    )
+
+    if not job:
+        raise HTTPException(
+            status_code=404,
+            detail="Job not found",
+        )
+
+    return job
+
+
+@app.get("/jobs-list/{job_number}")
+def job_detail_endpoint(job_number: str):
+    job = get_job(job_number)
+
+    if not job:
+        raise HTTPException(
+            status_code=404,
+            detail="Job not found",
+        )
+
+    return job
+
+
+@app.patch("/jobs-list/{job_number}/status")
+def update_job_status_endpoint(
+    job_number: str,
+    status: str,
+):
+    allowed = {
+        "Booked",
+        "Assigned",
+        "In Progress",
+        "Collected",
+        "Delivered",
+        "Completed",
+        "Cancelled",
+    }
+
+    if status not in allowed:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid status. Allowed values: {', '.join(sorted(allowed))}",
+        )
+
+    job = update_job_status(
+        job_number=job_number,
+        status=status,
+    )
+
+    if not job:
+        raise HTTPException(
+            status_code=404,
+            detail="Job not found",
+        )
+
+    return job
